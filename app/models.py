@@ -78,7 +78,7 @@ VALID_TRANSITIONS: dict[tuple[DeviceState, EventType], DeviceState] = {
 # ── Request / Response schemas ─────────────────────────────────────────
 
 class EventPayload(BaseModel):
-    imei: str = Field(..., min_length=15, max_length=15)
+    serial_number: str = Field(..., min_length=1, max_length=64)
     event_type: EventType
     transaction_id: Optional[str] = None  # for idempotency
     actor: str = "system"
@@ -86,7 +86,7 @@ class EventPayload(BaseModel):
 
 
 class PolicyResponse(BaseModel):
-    imei: str
+    serial_number: str
     device_state: DeviceState
     restrictions: dict
     lock_screen_message: str
@@ -95,7 +95,7 @@ class PolicyResponse(BaseModel):
 
 class CommandEntry(BaseModel):
     id: str
-    imei: str
+    serial_number: str
     command: CommandType
     payload: dict = Field(default_factory=dict)
     created_at: datetime
@@ -103,7 +103,7 @@ class CommandEntry(BaseModel):
 
 
 class AuditRecord(BaseModel):
-    imei: str
+    serial_number: str
     from_state: DeviceState
     to_state: DeviceState
     event: EventType
