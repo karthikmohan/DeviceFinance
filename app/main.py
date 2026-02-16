@@ -54,6 +54,7 @@ api = APIRouter(prefix="/api")
 # ── In-memory stores (swap for DB in production) ──────────────────────
 
 devices: dict[str, DeviceState] = {}         # serial_number -> current state
+custom_messages: dict[str, str] = {}         # serial_number -> custom lock_screen_message
 audit_log: list[AuditRecord] = []
 command_queue: list[CommandEntry] = []
 confirmations: list[dict] = []
@@ -206,6 +207,13 @@ def handle_event(payload: EventPayload, request: Request):
         command_queue.append(entry)
         logger.info(f"COMMAND | serial={sn} queued={cmd.value} id={entry.id}")
 
+    # Store or clear custom lock screen message
+    if payload.custom_message:
+        custom_messages[sn] = payload.custom_message
+        logger.info(f"EVENT | serial={sn} custom_message set: {payload.custom_message}")
+    elif new_state in (DeviceState.ACTIVE, DeviceState.PAID_OFF):
+        custom_messages.pop(sn, None)
+
     if payload.transaction_id:
         processed_txns.add(payload.transaction_id)
 
@@ -227,11 +235,14 @@ def get_policy(serial_number: str):
         raise HTTPException(status_code=404, detail=f"Device {serial_number} not found")
 
     template = POLICY_TEMPLATES.get(state, POLICY_TEMPLATES[DeviceState.ACTIVE])
+    lock_message = custom_messages.get(serial_number, template["lock_screen_message"])
     logger.info(f"POLICY | serial={serial_number} state={state.value} restrictions={template['restrictions']}")
     return PolicyResponse(
         serial_number=serial_number,
         device_state=state,
-        **template,
+        restrictions=template["restrictions"],
+        lock_screen_message=lock_message,
+        protected_packages=template["protected_packages"],
     )
 
 
@@ -272,6 +283,7 @@ def delete_device(serial_number: str):
         raise HTTPException(status_code=404, detail=f"Device {serial_number} not found")
 
     del devices[serial_number]
+    custom_messages.pop(serial_number, None)
 
     removed_audit = len([r for r in audit_log if r.serial_number == serial_number])
     audit_log[:] = [r for r in audit_log if r.serial_number != serial_number]

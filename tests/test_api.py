@@ -5,7 +5,7 @@ idempotency, circuit breaker, policy responses, and device deletion.
 
 from fastapi.testclient import TestClient
 
-from app.main import app, devices, audit_log, command_queue, confirmations, processed_txns
+from app.main import app, devices, audit_log, command_queue, confirmations, processed_txns, custom_messages
 from app.models import DeviceState
 from app.safety import circuit_breaker
 
@@ -16,6 +16,7 @@ SERIAL = "EMULATOR30X1234"
 
 def _reset():
     devices.clear()
+    custom_messages.clear()
     audit_log.clear()
     command_queue.clear()
     confirmations.clear()
@@ -235,6 +236,43 @@ def test_confirm_policy():
     # Check confirmations endpoint
     resp2 = client.get(f"/api/confirmations/{SERIAL}")
     assert len(resp2.json()["confirmations"]) == 1
+
+
+# ── Custom lock screen message ─────────────────────────────────────────
+
+def test_custom_message_overrides_default():
+    _reset()
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    # Send overdue with a custom message
+    client.post("/api/event", json={
+        "serial_number": SERIAL,
+        "event_type": "payment.overdue",
+        "custom_message": "Pay $50 by March 1st to avoid lock.",
+    })
+    resp = client.get(f"/api/policy/{SERIAL}")
+    assert resp.json()["lock_screen_message"] == "Pay $50 by March 1st to avoid lock."
+
+
+def test_default_message_when_no_custom():
+    _reset()
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
+    resp = client.get(f"/api/policy/{SERIAL}")
+    assert resp.json()["lock_screen_message"] == "Payment overdue. Please pay to avoid restrictions."
+
+
+def test_custom_message_cleared_on_active():
+    _reset()
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={
+        "serial_number": SERIAL,
+        "event_type": "payment.overdue",
+        "custom_message": "Custom warning",
+    })
+    # Payment received — back to ACTIVE, custom message should be cleared
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.received"})
+    resp = client.get(f"/api/policy/{SERIAL}")
+    assert resp.json()["lock_screen_message"] == ""  # ACTIVE default is empty
 
 
 # ── Dashboard ────────────────────────────────────────────────────────

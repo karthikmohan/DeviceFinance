@@ -83,6 +83,7 @@ class EventPayload(BaseModel):
     transaction_id: Optional[str] = None  # for idempotency
     actor: str = "system"
     metadata: dict = Field(default_factory=dict)
+    custom_message: Optional[str] = None  # overrides default lock_screen_message
 
 
 class PolicyResponse(BaseModel):
