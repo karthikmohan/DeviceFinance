@@ -110,3 +110,11 @@ class AuditRecord(BaseModel):
     actor: str
     timestamp: datetime
     transaction_id: Optional[str] = None
+
+
+class PolicyConfirmation(BaseModel):
+    serial_number: str = Field(..., min_length=1, max_length=64)
+    previous_state: str
+    new_state: str
+    success: bool
+    details: str = ""

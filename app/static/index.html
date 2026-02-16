@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Device Finance Platform</title>
+<style>
+  :root {
+    --bg: #f5f5f5; --card: #ffffff; --border: #e0e0e0;
+    --text: #212121; --text2: #616161; --text3: #9e9e9e;
+    --green: #2e7d32; --green-bg: #e8f5e9;
+    --red: #c62828; --red-bg: #ffebee;
+    --orange: #ef6c00; --orange-bg: #fff3e0;
+    --blue: #1565c0; --blue-bg: #e3f2fd;
+    --primary: #1565c0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  header h1 { font-size: 22px; font-weight: 700; }
+  header .subtitle { font-size: 13px; color: var(--text3); }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 100px; text-align: center; }
+  .stat .num { font-size: 24px; font-weight: 700; }
+  .stat .label { font-size: 11px; color: var(--text3); text-transform: uppercase; margin-top: 2px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+  .card-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+  .badge-green { background: var(--green-bg); color: var(--green); }
+  .badge-red { background: var(--red-bg); color: var(--red); }
+  .badge-orange { background: var(--orange-bg); color: var(--orange); }
+  .badge-blue { background: var(--blue-bg); color: var(--blue); }
+  .badge-gray { background: #f5f5f5; color: var(--text3); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; color: var(--text3); padding: 6px 8px; border-bottom: 2px solid var(--border); }
+  td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  button, .btn { padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 12px; cursor: pointer; font-weight: 500; transition: all 0.15s; }
+  button:hover, .btn:hover { background: var(--bg); border-color: var(--text3); }
+  .btn-primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .btn-primary:hover { background: #0d47a1; }
+  .btn-danger { color: var(--red); border-color: var(--red); }
+  .btn-danger:hover { background: var(--red-bg); }
+  .btn-warn { color: var(--orange); border-color: var(--orange); }
+  .btn-warn:hover { background: var(--orange-bg); }
+  .empty { text-align: center; padding: 32px; color: var(--text3); font-size: 14px; }
+  .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast-ok { background: var(--green); color: white; }
+  .toast-err { background: var(--red); color: white; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: none; align-items: center; justify-content: center; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--card); border-radius: 12px; padding: 24px; min-width: 340px; max-width: 480px; }
+  .modal h3 { margin-bottom: 16px; font-size: 16px; }
+  .modal select, .modal input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+  .modal .btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .section-title { font-size: 13px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 8px; }
+  .audit-row { font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
+  .audit-row:last-child { border-bottom: none; }
+  .confirm-row { font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .confirm-row:last-child { border-bottom: none; }
+  @media (max-width: 640px) {
+    .container { padding: 12px 8px; }
+    table { font-size: 12px; }
+    .actions { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div>
+      <h1>Device Finance Platform</h1>
+      <div class="subtitle">Policy Management Dashboard</div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <!-- Action bar -->
+  <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+    <button class="btn-primary" onclick="openEventModal()">Send Event</button>
+    <button class="btn-danger" onclick="emergencyUnlock()">Emergency Unlock</button>
+    <button onclick="refresh()">Refresh</button>
+    <span style="flex:1"></span>
+    <span class="mono" style="font-size:11px; color:var(--text3); align-self:center;" id="lastRefresh"></span>
+  </div>
+
+  <!-- Devices table -->
+  <div class="card">
+    <div class="card-title">Devices</div>
+    <div id="deviceTable"></div>
+  </div>
+
+  <!-- Device Detail (hidden by default) -->
+  <div id="detailSection" style="display:none;">
+    <div class="card">
+      <div class="card-title">
+        <span>Device: <span id="detailSerial" class="mono"></span></span>
+        <button class="btn-danger" onclick="deleteDevice()">Delete Device</button>
+      </div>
+
+      <div class="section-title">Current Policy</div>
+      <div id="policyDetail"></div>
+
+      <div class="section-title">Audit Trail</div>
+      <div id="auditDetail"></div>
+
+      <div class="section-title">DPC Confirmations</div>
+      <div id="confirmDetail"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Event Modal -->
+<div class="modal-bg" id="eventModal">
+  <div class="modal">
+    <h3>Send Event</h3>
+    <label style="font-size:12px;color:var(--text2);">Serial Number</label>
+    <input id="evtSerial" placeholder="e.g. EMULATOR36X3X10X0" />
+    <label style="font-size:12px;color:var(--text2);">Event Type</label>
+    <select id="evtType">
+      <option value="dpc.enrolled">dpc.enrolled</option>
+      <option value="payment.received">payment.received</option>
+      <option value="payment.overdue">payment.overdue</option>
+      <option value="payment.completed">payment.completed</option>
+      <option value="grace.expired">grace.expired</option>
+      <option value="escalation.timeout">escalation.timeout</option>
+      <option value="admin.suspend">admin.suspend</option>
+      <option value="admin.reinstate">admin.reinstate</option>
+      <option value="admin.report_stolen">admin.report_stolen</option>
+      <option value="admin.recover">admin.recover</option>
+      <option value="admin.decommission">admin.decommission</option>
+    </select>
+    <label style="font-size:12px;color:var(--text2);">Actor</label>
+    <input id="evtActor" value="admin" />
+    <div id="evtHint" style="font-size:11px;color:var(--text3);margin-bottom:12px;"></div>
+    <div class="btns">
+      <button onclick="closeEventModal()">Cancel</button>
+      <button class="btn-primary" onclick="sendEvent()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/api';
+let selectedSerial = null;
+let transitionsMap = {};
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'toast-ok' : 'toast-err');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+function stateBadge(state) {
+  const cls = {
+    'ACTIVE': 'badge-green', 'PAID_OFF': 'badge-green',
+    'GRACE_PERIOD': 'badge-orange', 'PROVISIONING': 'badge-blue',
+    'SOFT_LOCKED': 'badge-red', 'HARD_LOCKED': 'badge-red',
+    'SUSPENDED': 'badge-red', 'STOLEN_LOCKED': 'badge-red',
+    'DECOMMISSIONED': 'badge-gray',
+  }[state] || 'badge-gray';
+  return `<span class="badge ${cls}">${state}</span>`;
+}
+
+async function loadTransitions() {
+  try {
+    transitionsMap = await api('GET', '/transitions');
+  } catch (e) {}
+}
+
+function getValidEvents(state) {
+  const events = transitionsMap[state] || [];
+  // Always add admin.decommission
+  const evts = events.map(e => e.event);
+  if (!evts.includes('admin.decommission')) evts.push('admin.decommission');
+  return evts;
+}
+
+async function refresh() {
+  try {
+    const data = await api('GET', '/devices');
+    const devices = data.devices;
+
+    // Stats
+    const total = devices.length;
+    const active = devices.filter(d => d.state === 'ACTIVE').length;
+    const locked = devices.filter(d => ['SOFT_LOCKED','HARD_LOCKED','SUSPENDED','STOLEN_LOCKED'].includes(d.state)).length;
+    document.getElementById('stats').innerHTML = `
+      <div class="stat"><div class="num">${total}</div><div class="label">Devices</div></div>
+      <div class="stat"><div class="num" style="color:var(--green)">${active}</div><div class="label">Active</div></div>
+      <div class="stat"><div class="num" style="color:var(--red)">${locked}</div><div class="label">Locked</div></div>
+    `;
+
+    // Table
+    if (devices.length === 0) {
+      document.getElementById('deviceTable').innerHTML = '<div class="empty">No devices registered. Enroll a device or send a dpc.enrolled event.</div>';
+    } else {
+      let html = '<table><thead><tr><th>Serial Number</th><th>State</th><th>Actions</th></tr></thead><tbody>';
+      for (const d of devices) {
+        const events = getValidEvents(d.state);
+        let actionBtns = `<button onclick="selectDevice('${d.serial_number}')">Details</button>`;
+        for (const evt of events.slice(0, 3)) {
+          const label = evt.replace('admin.', '').replace('payment.', 'pay.').replace('escalation.', 'esc.');
+          const cls = evt.includes('received') || evt.includes('reinstate') || evt.includes('recover') ? '' :
+                      evt.includes('decommission') || evt.includes('stolen') ? 'btn-danger' : 'btn-warn';
+          actionBtns += ` <button class="${cls}" onclick="quickEvent('${d.serial_number}','${evt}')">${label}</button>`;
+        }
+        html += `<tr>
+          <td class="mono">${d.serial_number}</td>
+          <td>${stateBadge(d.state)}</td>
+          <td><div class="actions">${actionBtns}</div></td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('deviceTable').innerHTML = html;
+    }
+
+    document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+    if (selectedSerial) loadDetail(selectedSerial);
+  } catch (e) {
+    toast('Failed to load devices: ' + e.message, false);
+  }
+}
+
+async function selectDevice(serial) {
+  selectedSerial = serial;
+  document.getElementById('detailSection').style.display = 'block';
+  document.getElementById('detailSerial').textContent = serial;
+  await loadDetail(serial);
+  document.getElementById('detailSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function loadDetail(serial) {
+  // Policy
+  try {
+    const p = await api('GET', `/policy/${serial}`);
+    const r = p.restrictions || {};
+    document.getElementById('policyDetail').innerHTML = `
+      <table>
+        <tr><td>State</td><td>${stateBadge(p.device_state)}</td></tr>
+        <tr><td>USB Transfer</td><td><span class="badge ${r.no_usb ? 'badge-red' : 'badge-green'}">${r.no_usb ? 'BLOCKED' : 'ALLOWED'}</span></td></tr>
+        <tr><td>Camera</td><td><span class="badge ${r.no_camera ? 'badge-red' : 'badge-green'}">${r.no_camera ? 'DISABLED' : 'ENABLED'}</span></td></tr>
+        <tr><td>App Install</td><td><span class="badge ${r.no_install_apps ? 'badge-red' : 'badge-green'}">${r.no_install_apps ? 'BLOCKED' : 'ALLOWED'}</span></td></tr>
+        <tr><td>Lock Message</td><td class="mono" style="font-size:11px;">${p.lock_screen_message || '—'}</td></tr>
+        <tr><td>Protected Pkgs</td><td class="mono" style="font-size:11px;">${p.protected_packages.join(', ') || '—'}</td></tr>
+      </table>`;
+  } catch (e) {
+    document.getElementById('policyDetail').innerHTML = '<div style="color:var(--text3);font-size:13px;">No policy data</div>';
+  }
+
+  // Audit
+  try {
+    const a = await api('GET', `/audit/${serial}`);
+    if (a.records.length === 0) {
+      document.getElementById('auditDetail').innerHTML = '<div style="color:var(--text3);font-size:13px;">No audit records</div>';
+    } else {
+      let html = '';
+      for (const r of a.records.reverse()) {
+        const ts = new Date(r.timestamp).toLocaleString();
+        html += `<div class="audit-row">
+          <span class="mono" style="color:var(--text3);min-width:140px;">${ts}</span>
+          ${stateBadge(r.from_state)} <span style="color:var(--text3);">&rarr;</span> ${stateBadge(r.to_state)}
+          <span class="mono" style="color:var(--text2);">${r.event}</span>
+          <span style="color:var(--text3);">${r.actor}</span>
+        </div>`;
+      }
+      document.getElementById('auditDetail').innerHTML = html;
+    }
+  } catch (e) {
+    document.getElementById('auditDetail').innerHTML = '<div style="color:var(--text3);font-size:13px;">Failed to load</div>';
+  }
+
+  // Confirmations
+  try {
+    const c = await api('GET', `/confirmations/${serial}`);
+    if (c.confirmations.length === 0) {
+      document.getElementById('confirmDetail').innerHTML = '<div style="color:var(--text3);font-size:13px;">No confirmations from device yet</div>';
+    } else {
+      let html = '';
+      for (const entry of c.confirmations.reverse()) {
+        const ts = new Date(entry.timestamp).toLocaleString();
+        const icon = entry.success ? '<span class="badge badge-green">OK</span>' : '<span class="badge badge-red">FAIL</span>';
+        html += `<div class="confirm-row">
+          <span class="mono" style="color:var(--text3);">${ts}</span>
+          ${icon} ${entry.previous_state} &rarr; ${entry.new_state}
+          <span class="mono" style="color:var(--text2);">${entry.details}</span>
+        </div>`;
+      }
+      document.getElementById('confirmDetail').innerHTML = html;
+    }
+  } catch (e) {
+    document.getElementById('confirmDetail').innerHTML = '<div style="color:var(--text3);font-size:13px;">Failed to load</div>';
+  }
+}
+
+async function quickEvent(serial, eventType) {
+  try {
+    const data = await api('POST', '/event', { serial_number: serial, event_type: eventType, actor: 'admin' });
+    toast(`${data.from_state} → ${data.to_state}`);
+    refresh();
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+function openEventModal(serial) {
+  document.getElementById('evtSerial').value = serial || selectedSerial || '';
+  document.getElementById('eventModal').classList.add('open');
+  updateEventHint();
+}
+function closeEventModal() {
+  document.getElementById('eventModal').classList.remove('open');
+}
+
+function updateEventHint() {
+  // Could show valid transitions here
+}
+
+async function sendEvent() {
+  const serial = document.getElementById('evtSerial').value.trim();
+  const eventType = document.getElementById('evtType').value;
+  const actor = document.getElementById('evtActor').value.trim() || 'admin';
+  if (!serial) { toast('Serial number required', false); return; }
+  try {
+    const data = await api('POST', '/event', { serial_number: serial, event_type: eventType, actor });
+    toast(`${data.from_state} → ${data.to_state}`);
+    closeEventModal();
+    refresh();
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+async function deleteDevice() {
+  if (!selectedSerial) return;
+  if (!confirm(`Delete device ${selectedSerial} and all its data?`)) return;
+  try {
+    await api('DELETE', `/device/${selectedSerial}`);
+    toast(`Deleted ${selectedSerial}`);
+    selectedSerial = null;
+    document.getElementById('detailSection').style.display = 'none';
+    refresh();
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+async function emergencyUnlock() {
+  if (!confirm('Emergency unlock ALL locked devices?')) return;
+  try {
+    const data = await api('POST', '/admin/emergency-unlock?reason=dashboard');
+    toast(`Unlocked ${data.unlocked_count} devices`);
+    refresh();
+  } catch (e) {
+    toast(e.message, false);
+  }
+}
+
+// Init
+loadTransitions().then(refresh);
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

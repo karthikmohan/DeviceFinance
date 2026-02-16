@@ -1,15 +1,19 @@
 """
-Gate 3 — Minimal Backend Policy Flow
+Device Finance Platform — Backend API + Dashboard
 
-Endpoints:
-    POST /event                         — Accept payment / lifecycle events
-    GET  /policy/{serial_number}        — Return current policy payload for device
-    GET  /commands/{serial_number}      — Fetch pending commands (poll by DPC)
-    POST /commands/{id}/ack             — Acknowledge a command
-    GET  /audit/{serial_number}         — View audit trail for a device
-    DELETE /device/{serial_number}      — Remove a device and its history
-    GET  /devices                       — List all registered devices
-    POST /admin/emergency-unlock        — Gate 4: emergency mass unlock
+API endpoints (all under /api):
+    POST /api/event                      — Accept payment / lifecycle events
+    GET  /api/policy/{serial_number}     — Return current policy payload for device
+    GET  /api/commands/{serial_number}   — Fetch pending commands (poll by DPC)
+    POST /api/commands/{id}/ack          — Acknowledge a command
+    GET  /api/audit/{serial_number}      — View audit trail for a device
+    DELETE /api/device/{serial_number}   — Remove a device and its history
+    GET  /api/devices                    — List all registered devices
+    POST /api/admin/emergency-unlock     — Gate 4: emergency mass unlock
+    POST /api/confirm                    — DPC confirms policy application
+
+Dashboard:
+    GET  /                               — Web UI dashboard
 """
 
 from __future__ import annotations
@@ -17,8 +21,10 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, APIRouter
+from fastapi.responses import HTMLResponse
 
 from .models import (
     AuditRecord,
@@ -27,6 +33,7 @@ from .models import (
     DeviceState,
     EventPayload,
     EventType,
+    PolicyConfirmation,
     PolicyResponse,
     VALID_TRANSITIONS,
 )
@@ -41,13 +48,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("dpc-backend")
 
-app = FastAPI(title="Device Finance Policy Backend", version="0.2.0")
+app = FastAPI(title="Device Finance Platform", version="1.0.0")
+api = APIRouter(prefix="/api")
 
 # ── In-memory stores (swap for DB in production) ──────────────────────
 
 devices: dict[str, DeviceState] = {}         # serial_number -> current state
 audit_log: list[AuditRecord] = []
 command_queue: list[CommandEntry] = []
+confirmations: list[dict] = []
 processed_txns: set[str] = set()             # idempotency set
 
 
@@ -102,9 +111,17 @@ POLICY_TEMPLATES: dict[DeviceState, dict] = {
 }
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────
 
-@app.post("/event", status_code=200)
+@app.get("/", response_class=HTMLResponse)
+def dashboard():
+    html_path = Path(__file__).parent / "static" / "index.html"
+    return HTMLResponse(content=html_path.read_text())
+
+
+# ── API Endpoints ─────────────────────────────────────────────────────
+
+@api.post("/event", status_code=200)
 def handle_event(payload: EventPayload, request: Request):
     """
     Accept a payment or lifecycle event and transition device state.
@@ -201,7 +218,7 @@ def handle_event(payload: EventPayload, request: Request):
     }
 
 
-@app.get("/policy/{serial_number}", response_model=PolicyResponse)
+@api.get("/policy/{serial_number}", response_model=PolicyResponse)
 def get_policy(serial_number: str):
     """Return the current policy payload for a device."""
     state = devices.get(serial_number)
@@ -218,7 +235,7 @@ def get_policy(serial_number: str):
     )
 
 
-@app.get("/commands/{serial_number}")
+@api.get("/commands/{serial_number}")
 def get_commands(serial_number: str):
     """Return pending (unacknowledged) commands for a device."""
     pending = [c for c in command_queue if c.serial_number == serial_number and not c.acknowledged]
@@ -226,7 +243,7 @@ def get_commands(serial_number: str):
     return {"serial_number": serial_number, "commands": [c.model_dump() for c in pending]}
 
 
-@app.post("/commands/{command_id}/ack")
+@api.post("/commands/{command_id}/ack")
 def ack_command(command_id: str):
     """Mark a command as acknowledged by the DPC."""
     for c in command_queue:
@@ -237,7 +254,7 @@ def ack_command(command_id: str):
     raise HTTPException(status_code=404, detail="Command not found")
 
 
-@app.get("/audit/{serial_number}")
+@api.get("/audit/{serial_number}")
 def get_audit(serial_number: str):
     """Return the full audit trail for a device."""
     records = [r.model_dump() for r in audit_log if r.serial_number == serial_number]
@@ -245,26 +262,25 @@ def get_audit(serial_number: str):
     return {"serial_number": serial_number, "records": records}
 
 
-@app.delete("/device/{serial_number}")
+@api.delete("/device/{serial_number}")
 def delete_device(serial_number: str):
     """
     Remove a device and all its associated data (state, audit, commands).
-    Use this to clean up test devices or decommissioned entries.
     """
     if serial_number not in devices:
         logger.warning(f"DELETE | serial={serial_number} NOT_FOUND")
         raise HTTPException(status_code=404, detail=f"Device {serial_number} not found")
 
-    # Remove device state
     del devices[serial_number]
 
-    # Remove audit records
     removed_audit = len([r for r in audit_log if r.serial_number == serial_number])
     audit_log[:] = [r for r in audit_log if r.serial_number != serial_number]
 
-    # Remove commands
     removed_cmds = len([c for c in command_queue if c.serial_number == serial_number])
     command_queue[:] = [c for c in command_queue if c.serial_number != serial_number]
+
+    # Also remove confirmations
+    confirmations[:] = [c for c in confirmations if c.get("serial_number") != serial_number]
 
     logger.info(
         f"DELETE | serial={serial_number} removed audit_records={removed_audit} commands={removed_cmds}"
@@ -277,7 +293,37 @@ def delete_device(serial_number: str):
     }
 
 
-@app.post("/admin/emergency-unlock")
+@api.post("/confirm")
+def confirm_policy(payload: PolicyConfirmation):
+    """
+    DPC confirms that a policy change was applied (or failed) on the device.
+    Only sent when the device detects a state transition.
+    """
+    entry = {
+        "serial_number": payload.serial_number,
+        "previous_state": payload.previous_state,
+        "new_state": payload.new_state,
+        "success": payload.success,
+        "details": payload.details,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    confirmations.append(entry)
+    logger.info(
+        f"CONFIRM | serial={payload.serial_number} "
+        f"{payload.previous_state} -> {payload.new_state} "
+        f"success={payload.success} details={payload.details}"
+    )
+    return {"status": "ok", **entry}
+
+
+@api.get("/confirmations/{serial_number}")
+def get_confirmations(serial_number: str):
+    """Return all policy confirmations for a device."""
+    entries = [c for c in confirmations if c["serial_number"] == serial_number]
+    return {"serial_number": serial_number, "confirmations": entries}
+
+
+@api.post("/admin/emergency-unlock")
 def emergency_unlock(reason: str = "emergency"):
     """
     Gate 4 — Emergency mass unlock.
@@ -313,7 +359,7 @@ def emergency_unlock(reason: str = "emergency"):
     }
 
 
-@app.get("/devices")
+@api.get("/devices")
 def list_devices():
     """List all registered devices and their current state."""
     device_list = [
@@ -322,6 +368,24 @@ def list_devices():
     ]
     logger.info(f"DEVICES | total={len(device_list)}")
     return {"devices": device_list, "total": len(device_list)}
+
+
+@api.get("/transitions")
+def get_transitions():
+    """Return all valid state transitions for the UI."""
+    result = {}
+    for (from_state, event_type), to_state in VALID_TRANSITIONS.items():
+        if from_state.value not in result:
+            result[from_state.value] = []
+        result[from_state.value].append({
+            "event": event_type.value,
+            "to_state": to_state.value,
+        })
+    return result
+
+
+# Mount the API router
+app.include_router(api)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ idempotency, circuit breaker, policy responses, and device deletion.
 
 from fastapi.testclient import TestClient
 
-from app.main import app, devices, audit_log, command_queue, processed_txns
+from app.main import app, devices, audit_log, command_queue, confirmations, processed_txns
 from app.models import DeviceState
 from app.safety import circuit_breaker
 
@@ -18,6 +18,7 @@ def _reset():
     devices.clear()
     audit_log.clear()
     command_queue.clear()
+    confirmations.clear()
     processed_txns.clear()
     circuit_breaker.reset()
 
@@ -26,7 +27,7 @@ def _reset():
 
 def test_enroll_device():
     _reset()
-    resp = client.post("/event", json={
+    resp = client.post("/api/event", json={
         "serial_number": SERIAL,
         "event_type": "dpc.enrolled",
         "actor": "dpc",
@@ -40,34 +41,34 @@ def test_enroll_device():
 def test_payment_overdue_then_receive():
     _reset()
     # Enroll
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
     assert devices[SERIAL] == DeviceState.ACTIVE
 
     # Payment overdue
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
     assert devices[SERIAL] == DeviceState.GRACE_PERIOD
 
     # Payment received
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "payment.received"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.received"})
     assert devices[SERIAL] == DeviceState.ACTIVE
 
 
 def test_full_lock_escalation():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "grace.expired"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "grace.expired"})
     assert devices[SERIAL] == DeviceState.SOFT_LOCKED
 
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "escalation.timeout"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "escalation.timeout"})
     assert devices[SERIAL] == DeviceState.HARD_LOCKED
 
 
 def test_invalid_transition_rejected():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
     # ACTIVE + grace.expired is invalid
-    resp = client.post("/event", json={"serial_number": SERIAL, "event_type": "grace.expired"})
+    resp = client.post("/api/event", json={"serial_number": SERIAL, "event_type": "grace.expired"})
     assert resp.status_code == 409
 
 
@@ -75,14 +76,14 @@ def test_invalid_transition_rejected():
 
 def test_idempotent_event():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    resp1 = client.post("/event", json={
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    resp1 = client.post("/api/event", json={
         "serial_number": SERIAL, "event_type": "payment.overdue", "transaction_id": "txn-001"
     })
     assert resp1.status_code == 200
     assert resp1.json()["to_state"] == "GRACE_PERIOD"
 
-    resp2 = client.post("/event", json={
+    resp2 = client.post("/api/event", json={
         "serial_number": SERIAL, "event_type": "payment.overdue", "transaction_id": "txn-001"
     })
     assert resp2.json()["status"] == "duplicate"
@@ -92,8 +93,8 @@ def test_idempotent_event():
 
 def test_policy_active_device():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    resp = client.get(f"/policy/{SERIAL}")
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    resp = client.get(f"/api/policy/{SERIAL}")
     assert resp.status_code == 200
     data = resp.json()
     assert data["device_state"] == "ACTIVE"
@@ -102,10 +103,10 @@ def test_policy_active_device():
 
 def test_policy_locked_device():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "grace.expired"})
-    resp = client.get(f"/policy/{SERIAL}")
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "grace.expired"})
+    resp = client.get(f"/api/policy/{SERIAL}")
     data = resp.json()
     assert data["device_state"] == "SOFT_LOCKED"
     assert data["restrictions"]["no_camera"] is True
@@ -114,7 +115,7 @@ def test_policy_locked_device():
 
 def test_policy_unknown_device_404():
     _reset()
-    resp = client.get("/policy/UNKNOWN_SERIAL_999")
+    resp = client.get("/api/policy/UNKNOWN_SERIAL_999")
     assert resp.status_code == 404
 
 
@@ -122,9 +123,9 @@ def test_policy_unknown_device_404():
 
 def test_audit_trail():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
-    resp = client.get(f"/audit/{SERIAL}")
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
+    resp = client.get(f"/api/audit/{SERIAL}")
     records = resp.json()["records"]
     assert len(records) == 2
     assert records[0]["from_state"] == "PROVISIONING"
@@ -135,17 +136,17 @@ def test_audit_trail():
 
 def test_command_queue_and_ack():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    resp = client.get(f"/commands/{SERIAL}")
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    resp = client.get(f"/api/commands/{SERIAL}")
     commands = resp.json()["commands"]
     assert len(commands) >= 1
     cmd_id = commands[0]["id"]
 
-    ack_resp = client.post(f"/commands/{cmd_id}/ack")
+    ack_resp = client.post(f"/api/commands/{cmd_id}/ack")
     assert ack_resp.json()["status"] == "ok"
 
     # After ack, no pending commands
-    resp2 = client.get(f"/commands/{SERIAL}")
+    resp2 = client.get(f"/api/commands/{SERIAL}")
     assert len(resp2.json()["commands"]) == 0
 
 
@@ -159,14 +160,14 @@ def test_circuit_breaker_trips():
     for i in range(3):
         sn = f"CB_TEST_{i:04d}"
         devices[sn] = DeviceState.ACTIVE
-        client.post("/event", json={"serial_number": sn, "event_type": "payment.overdue"})
+        client.post("/api/event", json={"serial_number": sn, "event_type": "payment.overdue"})
         devices[sn] = DeviceState.GRACE_PERIOD
-        client.post("/event", json={"serial_number": sn, "event_type": "grace.expired"})
+        client.post("/api/event", json={"serial_number": sn, "event_type": "grace.expired"})
 
     # Next lock should be blocked
     sn_blocked = "CB_TEST_BLOCKED"
     devices[sn_blocked] = DeviceState.GRACE_PERIOD
-    resp = client.post("/event", json={"serial_number": sn_blocked, "event_type": "grace.expired"})
+    resp = client.post("/api/event", json={"serial_number": sn_blocked, "event_type": "grace.expired"})
     assert resp.status_code == 503
     assert "circuit breaker" in resp.json()["detail"].lower()
 
@@ -183,7 +184,7 @@ def test_emergency_unlock():
         sn = f"EMERG_TEST_{i:04d}"
         devices[sn] = DeviceState.HARD_LOCKED
 
-    resp = client.post("/admin/emergency-unlock", params={"reason": "test-drill"})
+    resp = client.post("/api/admin/emergency-unlock", params={"reason": "test-drill"})
     data = resp.json()
     assert data["unlocked_count"] == 5
     for sn in data["unlocked_devices"]:
@@ -194,10 +195,10 @@ def test_emergency_unlock():
 
 def test_delete_device():
     _reset()
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
-    client.post("/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "dpc.enrolled"})
+    client.post("/api/event", json={"serial_number": SERIAL, "event_type": "payment.overdue"})
 
-    resp = client.delete(f"/device/{SERIAL}")
+    resp = client.delete(f"/api/device/{SERIAL}")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
@@ -205,11 +206,50 @@ def test_delete_device():
 
     # Device should no longer exist
     assert SERIAL not in devices
-    resp2 = client.get(f"/policy/{SERIAL}")
+    resp2 = client.get(f"/api/policy/{SERIAL}")
     assert resp2.status_code == 404
 
 
 def test_delete_nonexistent_device():
     _reset()
-    resp = client.delete("/device/DOES_NOT_EXIST")
+    resp = client.delete("/api/device/DOES_NOT_EXIST")
     assert resp.status_code == 404
+
+
+# ── Policy confirmation ──────────────────────────────────────────────
+
+def test_confirm_policy():
+    _reset()
+    resp = client.post("/api/confirm", json={
+        "serial_number": SERIAL,
+        "previous_state": "SOFT_LOCKED",
+        "new_state": "ACTIVE",
+        "success": True,
+        "details": "All restrictions cleared",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["success"] is True
+
+    # Check confirmations endpoint
+    resp2 = client.get(f"/api/confirmations/{SERIAL}")
+    assert len(resp2.json()["confirmations"]) == 1
+
+
+# ── Dashboard ────────────────────────────────────────────────────────
+
+def test_dashboard_serves_html():
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "Device Finance Platform" in resp.text
+
+
+# ── Transitions endpoint ──────────────────────────────────────────────
+
+def test_transitions():
+    resp = client.get("/api/transitions")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "ACTIVE" in data
+    assert any(t["event"] == "payment.overdue" for t in data["ACTIVE"])
