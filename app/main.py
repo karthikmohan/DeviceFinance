@@ -12,10 +12,11 @@ Endpoints:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 from .models import (
     AuditRecord,
@@ -28,6 +29,15 @@ from .models import (
     VALID_TRANSITIONS,
 )
 from .safety import circuit_breaker
+
+# ── Structured logging ─────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-5s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("dpc-backend")
 
 app = FastAPI(title="Device Finance Policy Backend", version="0.1.0")
 
@@ -93,13 +103,17 @@ POLICY_TEMPLATES: dict[DeviceState, dict] = {
 # ── Endpoints ──────────────────────────────────────────────────────────
 
 @app.post("/event", status_code=200)
-def handle_event(payload: EventPayload):
+def handle_event(payload: EventPayload, request: Request):
     """
     Accept a payment or lifecycle event and transition device state.
     Idempotent: duplicate transaction_ids are no-ops.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"EVENT | imei={payload.imei} event={payload.event_type.value} actor={payload.actor} txn={payload.transaction_id} ip={client_ip}")
+
     # Idempotency check
     if payload.transaction_id and payload.transaction_id in processed_txns:
+        logger.info(f"EVENT | DUPLICATE txn={payload.transaction_id} imei={payload.imei} — skipped")
         return {
             "status": "duplicate",
             "message": f"Transaction {payload.transaction_id} already processed",
@@ -114,6 +128,7 @@ def handle_event(payload: EventPayload):
     else:
         key = (current_state, payload.event_type)
         if key not in VALID_TRANSITIONS:
+            logger.warning(f"EVENT | REJECTED imei={imei} invalid transition: {current_state.value} + {payload.event_type.value}")
             raise HTTPException(
                 status_code=409,
                 detail=f"Invalid transition: {current_state.value} + {payload.event_type.value}",
@@ -123,6 +138,7 @@ def handle_event(payload: EventPayload):
     # Circuit breaker: check before applying lock transitions
     if new_state in (DeviceState.SOFT_LOCKED, DeviceState.HARD_LOCKED):
         if not circuit_breaker.allow_lock():
+            logger.critical(f"EVENT | CIRCUIT_BREAKER_BLOCKED imei={imei} attempted {current_state.value} -> {new_state.value}")
             raise HTTPException(
                 status_code=503,
                 detail="Circuit breaker OPEN — lock operations halted. Contact on-call.",
@@ -131,6 +147,8 @@ def handle_event(payload: EventPayload):
 
     # Apply transition
     devices[imei] = new_state
+
+    logger.info(f"TRANSITION | imei={imei} {current_state.value} -> {new_state.value} event={payload.event_type.value} actor={payload.actor}")
 
     # Audit
     record = AuditRecord(
@@ -155,6 +173,7 @@ def handle_event(payload: EventPayload):
             created_at=datetime.now(timezone.utc),
         )
         command_queue.append(entry)
+        logger.info(f"COMMAND | imei={imei} queued={cmd.value} id={entry.id}")
 
     if payload.transaction_id:
         processed_txns.add(payload.transaction_id)
@@ -173,9 +192,11 @@ def get_policy(imei: str):
     """Return the current policy payload for a device."""
     state = devices.get(imei)
     if state is None:
+        logger.warning(f"POLICY | imei={imei} NOT_FOUND")
         raise HTTPException(status_code=404, detail=f"Device {imei} not found")
 
     template = POLICY_TEMPLATES.get(state, POLICY_TEMPLATES[DeviceState.ACTIVE])
+    logger.info(f"POLICY | imei={imei} state={state.value} restrictions={template['restrictions']}")
     return PolicyResponse(
         imei=imei,
         device_state=state,
@@ -187,6 +208,7 @@ def get_policy(imei: str):
 def get_commands(imei: str):
     """Return pending (unacknowledged) commands for a device."""
     pending = [c for c in command_queue if c.imei == imei and not c.acknowledged]
+    logger.info(f"COMMANDS | imei={imei} pending={len(pending)}")
     return {"imei": imei, "commands": [c.model_dump() for c in pending]}
 
 
@@ -196,6 +218,7 @@ def ack_command(command_id: str):
     for c in command_queue:
         if c.id == command_id:
             c.acknowledged = True
+            logger.info(f"COMMAND_ACK | id={command_id} imei={c.imei} command={c.command.value}")
             return {"status": "ok", "command_id": command_id}
     raise HTTPException(status_code=404, detail="Command not found")
 
@@ -204,6 +227,7 @@ def ack_command(command_id: str):
 def get_audit(imei: str):
     """Return the full audit trail for a device."""
     records = [r.model_dump() for r in audit_log if r.imei == imei]
+    logger.info(f"AUDIT | imei={imei} records={len(records)}")
     return {"imei": imei, "records": records}
 
 
@@ -229,8 +253,11 @@ def emergency_unlock(reason: str = "emergency"):
                 timestamp=datetime.now(timezone.utc),
             ))
             unlocked.append(imei)
+            logger.info(f"EMERGENCY_UNLOCK | imei={imei} {old_state.value} -> ACTIVE reason={reason}")
 
     circuit_breaker.reset()
+
+    logger.warning(f"EMERGENCY_UNLOCK | total={len(unlocked)} reason={reason}")
 
     return {
         "status": "ok",
@@ -238,6 +265,14 @@ def emergency_unlock(reason: str = "emergency"):
         "unlocked_imeis": unlocked,
         "reason": reason,
     }
+
+
+@app.get("/devices")
+def list_devices():
+    """List all registered devices and their current state."""
+    device_list = [{"imei": imei, "state": state.value} for imei, state in devices.items()]
+    logger.info(f"DEVICES | total={len(device_list)}")
+    return {"devices": device_list, "total": len(device_list)}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
